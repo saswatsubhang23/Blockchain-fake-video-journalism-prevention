@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: video-archival-app
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - neo4j
+      - ipfs
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j
+    environment:
+      NEO4J_AUTH: neo4j/password123
+      NEO4J_server_config_strict__validation_enabled: "false"
+    ports:
+      - "7475:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ipfs
+    ports:
+      - "4002:4001" # swarm (changed to avoid conflict)
+      - "5002:5001" # api (changed to avoid conflict)
+      - "8081:8080" # gateway (changed to avoid conflict)
+    environment:
+      IPFS_PROFILE: server
+    volumes:
+      - ipfs_staging:/export
+      - ipfs_data:/data/ipfs
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5001/api/v0/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  ipfs_staging:
+  ipfs_data:
