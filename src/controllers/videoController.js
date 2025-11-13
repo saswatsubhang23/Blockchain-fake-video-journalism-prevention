@@ -19,6 +19,18 @@ import { sha256File } from "../utils/hash.js";
 ffmpeg.setFfprobePath(ffprobe.path);
 
 /**
+ * 🛡️ Timeout wrapper for async operations
+ */
+function withTimeout(promise, timeoutMs, operation) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
+/**
  * 🔹 Enhanced Metadata Validation with Tamper Detection
  */
 async function extractAndValidateMetadata(filePath, claimedTimestamp = null, location = null) {
@@ -103,11 +115,12 @@ function validateMetadata(ffprobeData, claimedTimestamp, location) {
 }
 
 /**
- * 🎯 Main Upload Video Controller - Enhanced Workflow
+ * 🎯 Main Upload Video Controller - Enhanced Workflow with Timeout Protection
  */
 export async function uploadVideo(req, res, next) {
+  let file = req.file;
+  
   try {
-    const file = req.file;
     if (!file) return res.status(400).json({ ok: false, error: "No file uploaded (field name: video)" });
 
     // 🔹 Input Processing
@@ -124,23 +137,58 @@ export async function uploadVideo(req, res, next) {
     } = req.body;
 
     console.log(`📹 Processing video upload from ${uploaderId || 'anonymous'}`);
+    console.log(`📁 File: ${file.originalname} (${file.size} bytes)`);
 
     // 🔹 Step 1: Generate SHA-256 Hash (Digital Fingerprint)
+    console.log(`🔐 Generating hash...`);
     const hash = sha256File(file.path, true);
-    console.log(`🔐 Generated hash: ${hash}`);
+    console.log(`✅ Hash generated: ${hash}`);
 
     // 🔹 Step 2: Enhanced Metadata Validation with Tamper Detection
-    const metadata = await extractAndValidateMetadata(file.path, claimedTimestamp, location);
-    console.log(`🔍 Metadata validation: ${metadata.validation.isValid ? 'PASSED' : 'FAILED'}`);
+    console.log(`🔍 Validating metadata...`);
+    let metadata;
+    try {
+      metadata = await withTimeout(
+        extractAndValidateMetadata(file.path, claimedTimestamp, location),
+        30000,
+        'Metadata extraction'
+      );
+      console.log(`✅ Metadata validation: ${metadata.validation.isValid ? 'PASSED' : 'FAILED'}`);
+    } catch (err) {
+      console.error(`❌ Metadata extraction failed:`, err.message);
+      metadata = { 
+        duration: null, 
+        format: null, 
+        size: file.size, 
+        mimeType: file.mimetype,
+        validation: { isValid: false, issues: [err.message] }
+      };
+    }
 
     // 🔹 Step 3: Check for Existing Video (Duplicate Detection)
-    const existingVideo = await findVideoByHash(hash);
+    console.log(`🔍 Checking for duplicates...`);
+    let existingVideo;
+    try {
+      existingVideo = await withTimeout(
+        findVideoByHash(hash),
+        10000,
+        'Duplicate check'
+      );
+    } catch (err) {
+      console.error(`⚠️ Duplicate check failed:`, err.message);
+      existingVideo = null;
+    }
+
     if (existingVideo) {
       console.log(`⚠️ Duplicate detected! Hash ${hash} already exists`);
       
       // Create relationship for duplicate upload
       if (uploaderId) {
-        await linkVideoToUploader(hash, uploaderId, { isDuplicate: true, uploadedAt: new Date().toISOString() });
+        try {
+          await linkVideoToUploader(hash, uploaderId, { isDuplicate: true, uploadedAt: new Date().toISOString() });
+        } catch (err) {
+          console.error(`⚠️ Failed to link duplicate:`, err.message);
+        }
       }
 
       return res.status(200).json({
@@ -150,27 +198,42 @@ export async function uploadVideo(req, res, next) {
         message: "Video already exists in system",
         originalUpload: existingVideo,
         validation: metadata.validation,
-        relationships: await getVideoRelationships(hash)
+        relationships: await getVideoRelationships(hash).catch(() => ({}))
       });
     }
 
     // 🔹 Step 4: Store in IPFS (Decentralized Storage)
-    console.log(`💾 Storing in IPFS...`);
-    const ipfs = await addFileFromPath(file.path, file.originalname);
-    console.log(`✅ IPFS storage complete: ${ipfs.cid}`);
+    console.log(`💾 Uploading to IPFS...`);
+    let ipfs;
+    try {
+      ipfs = await withTimeout(
+        addFileFromPath(file.path, file.originalname),
+        120000,
+        'IPFS upload'
+      );
+      console.log(`✅ IPFS upload complete: ${ipfs.cid}`);
+    } catch (err) {
+      console.error(`❌ IPFS upload failed:`, err.message);
+      throw new Error(`IPFS upload failed: ${err.message}`);
+    }
 
     // 🔹 Step 5: Register on Blockchain (Optional but Recommended)
     let blockchainResult = { submitted: false };
     try {
-      console.log(`⛓️ Registering on blockchain...`);
-      blockchainResult = await registerHashOnChain(hash, ipfs.uri);
+      console.log(`⛓️ Attempting blockchain registration...`);
+      blockchainResult = await withTimeout(
+        registerHashOnChain(hash, ipfs.uri),
+        60000,
+        'Blockchain registration'
+      );
       console.log(`✅ Blockchain registration: ${blockchainResult.submitted ? 'SUCCESS' : 'SKIPPED'}`);
     } catch (e) {
-      console.log(`⚠️ Blockchain registration failed: ${e.message}`);
+      console.log(`⚠️ Blockchain registration failed/skipped: ${e.message}`);
       blockchainResult = { submitted: false, reason: e.message };
     }
 
     // 🔹 Step 6: Create Video Node in Neo4j
+    console.log(`📊 Storing in Neo4j database...`);
     const videoData = {
       hash: String(hash),
       ipfsCid: String(ipfs.cid || ''),
@@ -192,67 +255,126 @@ export async function uploadVideo(req, res, next) {
       description: String(description || '')
     };
 
-    console.log('DEBUG: About to call upsertVideo with:', videoData);
-    const storedVideo = await upsertVideo(videoData);
-    console.log(`📊 Video stored in Neo4j`);
+    let storedVideo;
+    try {
+      storedVideo = await withTimeout(
+        upsertVideo(videoData),
+        15000,
+        'Neo4j video creation'
+      );
+      console.log(`✅ Video stored in Neo4j`);
+    } catch (err) {
+      console.error(`❌ Neo4j storage failed:`, err.message);
+      throw new Error(`Database storage failed: ${err.message}`);
+    }
 
     // 🔹 Step 7: Create Graph Relationships
     const relationships = [];
 
     // Uploader → Video relationship
     if (uploaderId) {
-      console.log('DEBUG: About to call createUploader with:', {
-        id: uploaderId,
-        ipAddress: String(req.ip || ''),
-        userAgent: String(req.get('User-Agent') || '')
-      });
-      await createUploader({
-        id: uploaderId,
-        ipAddress: String(req.ip || ''),
-        userAgent: String(req.get('User-Agent') || '')
-      });
-      await linkVideoToUploader(hash, uploaderId, { 
-        uploadedAt: new Date().toISOString(),
-        isOriginal: derivedFromHash ? false : true,
-        isDuplicate: false
-      });
-      relationships.push(`(${uploaderId})-[:UPLOADED]->(${hash})`);
+      try {
+        console.log(`👤 Creating uploader relationship...`);
+        await withTimeout(
+          createUploader({
+            id: uploaderId,
+            ipAddress: String(req.ip || ''),
+            userAgent: String(req.get('User-Agent') || '')
+          }),
+          10000,
+          'Uploader creation'
+        );
+        
+        await withTimeout(
+          linkVideoToUploader(hash, uploaderId, { 
+            uploadedAt: new Date().toISOString(),
+            isOriginal: derivedFromHash ? false : true,
+            isDuplicate: false
+          }),
+          10000,
+          'Uploader link'
+        );
+        relationships.push(`(${uploaderId})-[:UPLOADED]->(${hash})`);
+        console.log(`✅ Uploader linked`);
+      } catch (err) {
+        console.error(`⚠️ Uploader linking failed:`, err.message);
+      }
     }
 
     // Event → Video relationship
     if (eventId && eventType) {
-      await createEvent({
-        id: String(eventId),
-        type: String(eventType),
-        tags: eventTags ? String(eventTags).split(',').map(tag => String(tag.trim())) : [],
-        description: String(description || '')
-      });
-      await linkVideoToEvent(hash, eventId, { 
-        eventType: String(eventType),
-        recordedAt: String(claimedTimestamp || new Date().toISOString())
-      });
-      relationships.push(`(${eventId})-[:CONTAINS]->(${hash})`);
+      try {
+        console.log(`🎪 Creating event relationship...`);
+        await withTimeout(
+          createEvent({
+            id: String(eventId),
+            type: String(eventType),
+            tags: eventTags ? String(eventTags).split(',').map(tag => String(tag.trim())) : [],
+            description: String(description || '')
+          }),
+          10000,
+          'Event creation'
+        );
+        
+        await withTimeout(
+          linkVideoToEvent(hash, eventId, { 
+            eventType: String(eventType),
+            recordedAt: String(claimedTimestamp || new Date().toISOString())
+          }),
+          10000,
+          'Event link'
+        );
+        relationships.push(`(${eventId})-[:CONTAINS]->(${hash})`);
+        console.log(`✅ Event linked`);
+      } catch (err) {
+        console.error(`⚠️ Event linking failed:`, err.message);
+      }
     }
 
     // Location → Video relationship
     if (location || gpsCoordinates) {
-      const locationId = await createLocation({
-        name: String(location || ''),
-        coordinates: String(gpsCoordinates || ''),
-        timestamp: String(claimedTimestamp || new Date().toISOString())
-      });
-      await linkVideoToLocation(hash, locationId);
-      relationships.push(`(${locationId})-[:RECORDED_AT]->(${hash})`);
+      try {
+        console.log(`📍 Creating location relationship...`);
+        const locationId = await withTimeout(
+          createLocation({
+            name: String(location || ''),
+            coordinates: String(gpsCoordinates || ''),
+            timestamp: String(claimedTimestamp || new Date().toISOString())
+          }),
+          10000,
+          'Location creation'
+        );
+        
+        await withTimeout(
+          linkVideoToLocation(hash, locationId),
+          10000,
+          'Location link'
+        );
+        relationships.push(`(${locationId})-[:RECORDED_AT]->(${hash})`);
+        console.log(`✅ Location linked`);
+      } catch (err) {
+        console.error(`⚠️ Location linking failed:`, err.message);
+      }
     }
 
     // Derived relationship (if this video is derived from another)
     if (derivedFromHash) {
-      // This will be handled in the Neo4j service
       relationships.push(`(${hash})-[:DERIVED_FROM]->(${derivedFromHash})`);
     }
 
     // 🔹 Step 8: Analyze Suspicious Patterns
-    const suspiciousPatterns = await findSuspiciousPatterns(uploaderId, hash);
+    let suspiciousPatterns = [];
+    try {
+      console.log(`🕵️ Analyzing for suspicious patterns...`);
+      suspiciousPatterns = await withTimeout(
+        findSuspiciousPatterns(uploaderId, hash),
+        15000,
+        'Pattern analysis'
+      );
+      console.log(`✅ Pattern analysis complete: ${suspiciousPatterns.length} patterns found`);
+    } catch (err) {
+      console.error(`⚠️ Pattern analysis failed:`, err.message);
+    }
 
     // 🔹 Final Output - Comprehensive Report
     const response = {
@@ -310,12 +432,23 @@ export async function uploadVideo(req, res, next) {
       neo4j: storedVideo
     };
 
-    console.log(`✅ Upload complete! Risk level: ${response.security.riskLevel}`);
+    console.log(`✅ Upload complete! Hash: ${hash}, Risk level: ${response.security.riskLevel}`);
     return res.json(response);
 
   } catch (err) {
     console.error('❌ Upload failed:', err);
-    next(err);
+    console.error('Stack trace:', err.stack);
+    
+    // Send detailed error response
+    return res.status(500).json({
+      ok: false,
+      error: err.message || 'Upload failed',
+      stage: err.message?.includes('IPFS') ? 'IPFS upload' :
+             err.message?.includes('Database') ? 'Database storage' :
+             err.message?.includes('Metadata') ? 'Metadata extraction' :
+             'Processing',
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }
 
