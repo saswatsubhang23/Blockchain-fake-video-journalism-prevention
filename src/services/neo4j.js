@@ -10,12 +10,40 @@ const driver = neo4j.driver(cfg.neo4j.uri, neo4j.auth.basic(cfg.neo4j.username, 
 });
 
 /**
+ * 🔍 Verify Neo4j Connection
+ */
+export async function verifyConnection() {
+  try {
+    await driver.verifyConnectivity();
+    console.log('✅ Neo4j connection verified');
+    return true;
+  } catch (error) {
+    console.error('❌ Neo4j connection failed:', error.message);
+    throw new Error(`Neo4j connection failed: ${error.message}`);
+  }
+}
+
+/**
+ * 🛡️ Wrap session operations with error handling
+ */
+async function withSession(operation, operationName = 'Neo4j operation') {
+  const session = driver.session();
+  
+  try {
+    return await operation(session);
+  } catch (error) {
+    console.error(`❌ ${operationName} failed:`, error.message);
+    throw new Error(`${operationName} failed: ${error.message}`);
+  } finally {
+    await session.close();
+  }
+}
+
+/**
  * 🎯 Enhanced Video Node Creation with Full Metadata
  */
 export async function upsertVideo(videoData) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     // Ensure all required parameters are present with defaults
     const safeVideoData = {
       hash: videoData.hash,
@@ -81,18 +109,14 @@ export async function upsertVideo(videoData) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Video upsert');
 }
 
 /**
  * 👤 Create or Update Uploader Node
  */
 export async function createUploader(uploaderData) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     const result = await session.executeWrite(async (tx) => {
       const res = await tx.run(
         `
@@ -115,18 +139,14 @@ export async function createUploader(uploaderData) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Uploader creation');
 }
 
 /**
  * 🎪 Create Event Node
  */
 export async function createEvent(eventData) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     const result = await session.executeWrite(async (tx) => {
       const res = await tx.run(
         `
@@ -149,18 +169,14 @@ export async function createEvent(eventData) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Event creation');
 }
 
 /**
  * 📍 Create Location Node
  */
 export async function createLocation(locationData) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     // Generate location ID if not provided
     const locationId = locationData.name ? 
       locationData.name.toLowerCase().replace(/\s+/g, '_') : 
@@ -188,18 +204,14 @@ export async function createLocation(locationData) {
     });
 
     return locationId;
-  } finally {
-    await session.close();
-  }
+  }, 'Location creation');
 }
 
 /**
  * 🔗 Link Video to Uploader
  */
 export async function linkVideoToUploader(videoHash, uploaderId, relationshipData = {}) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     await session.executeWrite(async (tx) => {
       await tx.run(
         `
@@ -219,18 +231,14 @@ export async function linkVideoToUploader(videoHash, uploaderId, relationshipDat
         }
       );
     });
-  } finally {
-    await session.close();
-  }
+  }, 'Link uploader to video');
 }
 
 /**
  * 🔗 Link Video to Event
  */
 export async function linkVideoToEvent(videoHash, eventId, relationshipData = {}) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     await session.executeWrite(async (tx) => {
       await tx.run(
         `
@@ -248,18 +256,14 @@ export async function linkVideoToEvent(videoHash, eventId, relationshipData = {}
         }
       );
     });
-  } finally {
-    await session.close();
-  }
+  }, 'Link event to video');
 }
 
 /**
  * 🔗 Link Video to Location
  */
 export async function linkVideoToLocation(videoHash, locationId) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     await session.executeWrite(async (tx) => {
       await tx.run(
         `
@@ -268,21 +272,17 @@ export async function linkVideoToLocation(videoHash, locationId) {
         MERGE (v)-[r:RECORDED_AT]->(l)
         SET r.createdAt = $createdAt
         `,
-                { videoHash, locationId, createdAt: new Date().toISOString() }
+        { videoHash, locationId, createdAt: new Date().toISOString() }
       );
     });
-  } finally {
-    await session.close();
-  }
+  }, 'Link location to video');
 }
 
 /**
  * 🔍 Find Video by Hash with All Relationships
  */
 export async function findVideoByHash(hash) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     const result = await session.executeRead(async (tx) => {
       const res = await tx.run(
         `
@@ -319,9 +319,7 @@ export async function findVideoByHash(hash) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Find video by hash');
 }
 
 
@@ -330,9 +328,7 @@ export async function findVideoByHash(hash) {
  * 🔍 Get All Relationships for a Video
  */
 export async function getVideoRelationships(hash) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     const result = await session.executeRead(async (tx) => {
       const res = await tx.run(
         `
@@ -397,133 +393,131 @@ export async function getVideoRelationships(hash) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Get video relationships');
 }
 
 /**
  * 🕵️ Find Suspicious Patterns - Advanced Fraud Detection
  */
 export async function findSuspiciousPatterns(uploaderId, currentVideoHash) {
-  const session = driver.session();
-  const patterns = [];
+  return await withSession(async (session) => {
+    const patterns = [];
 
-  try {
-    // Pattern 1: Same uploader with conflicting timestamps
-    if (uploaderId) {
-      const timeConflicts = await session.executeRead(async (tx) => {
+    try {
+      // Pattern 1: Same uploader with conflicting timestamps
+      if (uploaderId) {
+        const timeConflicts = await session.executeRead(async (tx) => {
+          const res = await tx.run(
+            `
+            MATCH (u:Uploader {id: $uploaderId})-[r:UPLOADED]->(v:Video)
+            WHERE v.hash <> $currentVideoHash 
+              AND v.validation IS NOT NULL
+              AND v.validation.embeddedTimestamp IS NOT NULL
+            WITH v, r.uploadedAt as uploadTime, v.validation.embeddedTimestamp as videoTime
+            WHERE duration.between(datetime(videoTime), datetime(uploadTime)).hours > 24
+            RETURN count(v) as conflicts, collect(v.hash) as conflictingVideos
+            `,
+            { uploaderId, currentVideoHash }
+          );
+          return res.records[0];
+        });
+
+        if (timeConflicts && timeConflicts.get("conflicts").toNumber() > 0) {
+          patterns.push({
+            type: "TIMESTAMP_CONFLICTS",
+            severity: "HIGH",
+            description: `Uploader has ${timeConflicts.get("conflicts")} videos with suspicious timestamp differences`,
+            evidence: timeConflicts.get("conflictingVideos")
+          });
+        }
+      }
+
+      // Pattern 2: Multiple uploaders claiming same original content
+      const duplicateOriginClaims = await session.executeRead(async (tx) => {
         const res = await tx.run(
           `
-          MATCH (u:Uploader {id: $uploaderId})-[r:UPLOADED]->(v:Video)
-          WHERE v.hash <> $currentVideoHash 
-            AND v.validation IS NOT NULL
-            AND v.validation.embeddedTimestamp IS NOT NULL
-          WITH v, r.uploadedAt as uploadTime, v.validation.embeddedTimestamp as videoTime
-          WHERE duration.between(datetime(videoTime), datetime(uploadTime)).hours > 24
-          RETURN count(v) as conflicts, collect(v.hash) as conflictingVideos
+          MATCH (v:Video {hash: $currentVideoHash})<-[r:UPLOADED]-(u:Uploader)
+          WHERE r.isOriginal = true
+          RETURN count(u) as originalClaimants, collect(u.id) as claimants
           `,
-          { uploaderId, currentVideoHash }
+          { currentVideoHash }
         );
         return res.records[0];
       });
 
-      if (timeConflicts && timeConflicts.get("conflicts").toNumber() > 0) {
+      if (duplicateOriginClaims && duplicateOriginClaims.get("originalClaimants").toNumber() > 1) {
         patterns.push({
-          type: "TIMESTAMP_CONFLICTS",
+          type: "MULTIPLE_ORIGIN_CLAIMS",
           severity: "HIGH",
-          description: `Uploader has ${timeConflicts.get("conflicts")} videos with suspicious timestamp differences`,
-          evidence: timeConflicts.get("conflictingVideos")
+          description: "Multiple users claiming to be original uploader",
+          evidence: duplicateOriginClaims.get("claimants")
         });
       }
-    }
 
-    // Pattern 2: Multiple uploaders claiming same original content
-    const duplicateOriginClaims = await session.executeRead(async (tx) => {
-      const res = await tx.run(
-        `
-        MATCH (v:Video {hash: $currentVideoHash})<-[r:UPLOADED]-(u:Uploader)
-        WHERE r.isOriginal = true
-        RETURN count(u) as originalClaimants, collect(u.id) as claimants
-        `,
-        { currentVideoHash }
-      );
-      return res.records[0];
-    });
+      // Pattern 3: Rapid-fire uploads from same user
+      if (uploaderId) {
+        const rapidUploads = await session.executeRead(async (tx) => {
+          const res = await tx.run(
+            `
+            MATCH (u:Uploader {id: $uploaderId})-[r:UPLOADED]->(v:Video)
+            WHERE r.uploadedAt > datetime() - duration('PT1H') // Last hour
+            RETURN count(v) as recentUploads
+            `,
+            { uploaderId }
+          );
+          return res.records[0];
+        });
 
-    if (duplicateOriginClaims && duplicateOriginClaims.get("originalClaimants").toNumber() > 1) {
-      patterns.push({
-        type: "MULTIPLE_ORIGIN_CLAIMS",
-        severity: "HIGH",
-        description: "Multiple users claiming to be original uploader",
-        evidence: duplicateOriginClaims.get("claimants")
-      });
-    }
+        if (rapidUploads && rapidUploads.get("recentUploads").toNumber() > 10) {
+          patterns.push({
+            type: "SUSPICIOUS_UPLOAD_RATE",
+            severity: "MEDIUM",
+            description: `User uploaded ${rapidUploads.get("recentUploads")} videos in the last hour`,
+            evidence: { uploaderId, recentCount: rapidUploads.get("recentUploads").toNumber() }
+          });
+        }
+      }
 
-    // Pattern 3: Rapid-fire uploads from same user
-    if (uploaderId) {
-      const rapidUploads = await session.executeRead(async (tx) => {
+      // Pattern 4: Videos with identical metadata but different hashes (potential manipulation)
+      const metadataMatches = await session.executeRead(async (tx) => {
         const res = await tx.run(
           `
-          MATCH (u:Uploader {id: $uploaderId})-[r:UPLOADED]->(v:Video)
-          WHERE r.uploadedAt > datetime() - duration('PT1H') // Last hour
-          RETURN count(v) as recentUploads
+          MATCH (current:Video {hash: $currentVideoHash})
+          MATCH (other:Video)
+          WHERE other.hash <> current.hash
+            AND other.duration = current.duration
+            AND other.width = current.width
+            AND other.height = current.height
+            AND abs(other.size - current.size) < 1000 // Within 1KB
+          RETURN count(other) as similarVideos, collect(other.hash) as similarHashes
           `,
-          { uploaderId }
+          { currentVideoHash }
         );
         return res.records[0];
       });
 
-      if (rapidUploads && rapidUploads.get("recentUploads").toNumber() > 10) {
+      if (metadataMatches && metadataMatches.get("similarVideos").toNumber() > 0) {
         patterns.push({
-          type: "SUSPICIOUS_UPLOAD_RATE",
+          type: "SIMILAR_METADATA",
           severity: "MEDIUM",
-          description: `User uploaded ${rapidUploads.get("recentUploads")} videos in the last hour`,
-          evidence: { uploaderId, recentCount: rapidUploads.get("recentUploads").toNumber() }
+          description: "Found videos with nearly identical metadata but different content",
+          evidence: metadataMatches.get("similarHashes")
         });
       }
+
+      return patterns;
+    } catch (error) {
+      console.error('⚠️ Error in pattern analysis:', error.message);
+      return patterns; // Return whatever patterns we found before error
     }
-
-    // Pattern 4: Videos with identical metadata but different hashes (potential manipulation)
-    const metadataMatches = await session.executeRead(async (tx) => {
-      const res = await tx.run(
-        `
-        MATCH (current:Video {hash: $currentVideoHash})
-        MATCH (other:Video)
-        WHERE other.hash <> current.hash
-          AND other.duration = current.duration
-          AND other.width = current.width
-          AND other.height = current.height
-          AND abs(other.size - current.size) < 1000 // Within 1KB
-        RETURN count(other) as similarVideos, collect(other.hash) as similarHashes
-        `,
-        { currentVideoHash }
-      );
-      return res.records[0];
-    });
-
-    if (metadataMatches && metadataMatches.get("similarVideos").toNumber() > 0) {
-      patterns.push({
-        type: "SIMILAR_METADATA",
-        severity: "MEDIUM",
-        description: "Found videos with nearly identical metadata but different content",
-        evidence: metadataMatches.get("similarHashes")
-      });
-    }
-
-    return patterns;
-  } finally {
-    await session.close();
-  }
+  }, 'Find suspicious patterns');
 }
 
 /**
  * 📊 Get System Statistics
  */
 export async function getSystemStats() {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     const result = await session.executeRead(async (tx) => {
       const res = await tx.run(
         `
@@ -556,18 +550,14 @@ export async function getSystemStats() {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Get system stats');
 }
 
 /**
  * 🔍 Search Videos by Multiple Criteria
  */
 export async function searchVideos(criteria) {
-  const session = driver.session();
-
-  try {
+  return await withSession(async (session) => {
     let query = `MATCH (v:Video)`;
     let whereConditions = [];
     let params = {};
@@ -609,7 +599,5 @@ export async function searchVideos(criteria) {
     });
 
     return result;
-  } finally {
-    await session.close();
-  }
+  }, 'Search videos');
 }
