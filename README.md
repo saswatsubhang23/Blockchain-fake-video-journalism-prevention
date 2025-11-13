@@ -10,7 +10,25 @@ This version uses Docker Compose for the app, Neo4j, and IPFS.
 
 ---
 
-## Quick Start (Docker + Neo4j + IPFS)
+## 🚀 Quick Start (One Command)
+
+**Get started in under 5 minutes!**
+
+### Linux / macOS / Git Bash
+```bash
+./init.sh
+```
+
+### Windows
+```bat
+init.bat
+```
+
+The initialization script will set up everything automatically. See [QUICKSTART.md](QUICKSTART.md) for details.
+
+---
+
+## Manual Setup (Docker + Neo4j + IPFS)
 
 1) Install deps locally (for tooling and contract tasks):
 ```bash
@@ -56,16 +74,32 @@ curl http://localhost:3000/checkVideo/0x<returned_sha256_hash>
 
 ---
 
-## Services
+## 📋 Services
 
-- API: http://localhost:3000
-- Neo4j Browser: http://localhost:7474 (login: neo4j / password)
-- IPFS Gateway: http://localhost:8080
-- IPFS API: http://localhost:5001
+After initialization, the following services will be available:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Web Interface** | http://localhost:3000 | N/A |
+| **API** | http://localhost:3000 | N/A |
+| **Neo4j Browser** | http://localhost:7475 | user: `neo4j`<br>password: `password123` |
+| **IPFS Gateway** | http://localhost:8081 | N/A |
+| **IPFS API** | http://localhost:5002 | N/A |
 
 ---
 
-## Optional: On-chain Registration
+## 📚 Documentation
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Get started in 5 minutes (recommended for first-time users)
+- **[UPLOAD_TROUBLESHOOTING.md](UPLOAD_TROUBLESHOOTING.md)** - Debugging and setup guide
+- **[UPLOAD_FIX_SUMMARY.md](UPLOAD_FIX_SUMMARY.md)** - Technical details and performance
+- **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** - Architecture overview
+
+---
+
+## 🔗 Optional: On-chain Registration
+
+To enable blockchain-based video hash registration:
 
 1) Configure `.env`:
 ```
@@ -86,14 +120,18 @@ npm run contracts:deploy
 
 ---
 
-## Troubleshooting
+## 🔧 Troubleshooting
+
+See [UPLOAD_TROUBLESHOOTING.md](UPLOAD_TROUBLESHOOTING.md) for comprehensive debugging help.
+
+**Quick fixes:**
 
 - Rebuild after changes:
 ```bash
 docker compose up -d --build
 ```
 
-- Logs:
+- View logs:
 ```bash
 docker compose logs -f app neo4j ipfs
 ```
@@ -104,6 +142,20 @@ docker compose down -v
 ```
 
 - Permission issues on uploads:
-  - Ensure `uploads/` exists on host and is writable: `mkdir -p uploads && chmod 775 uploads`
+```bash
+mkdir -p uploads && chmod 775 uploads
+```
 
 ---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is open source. See LICENSE for details.
+
+---
+
+**Built with ❤️ to fight fake news with blockchain technology** 🎥⛓️🔍
