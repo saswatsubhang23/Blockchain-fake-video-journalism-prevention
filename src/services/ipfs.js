@@ -1,6 +1,7 @@
 import { create } from "ipfs-http-client";
 import { loadConfig } from "../config/env.js";
 import fs from "fs/promises";
+import path from "path";
 
 const cfg = loadConfig();
 
@@ -47,8 +48,16 @@ export async function addFileFromPath(filePath, filename) {
   return await withRetry(async () => {
     console.log(`📤 Uploading ${filename} to IPFS (endpoint: ${cfg.ipfs.endpoint})...`);
     
+    // Security: Validate that filePath is within the uploads directory
+    const uploadsDir = path.resolve(cfg.uploads.dir);
+    const resolvedPath = path.resolve(filePath);
+    
+    if (!resolvedPath.startsWith(uploadsDir)) {
+      throw new Error('Invalid file path: File must be within uploads directory');
+    }
+    
     const client = getClient();
-    const data = await fs.readFile(filePath);
+    const data = await fs.readFile(resolvedPath);
     
     console.log(`📦 File size: ${data.length} bytes`);
     
